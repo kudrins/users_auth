@@ -1,0 +1,86 @@
+---
+- name: start VM 
+  hosts: localhost
+  vars_files: vars.yml
+  become: false
+  gather_facts: false
+  collections:
+    - community.vmware
+
+  tasks:
+  - name: deploy VM
+    vmware_guest: 
+      hostname: "{{ vcenter_hostname }}"
+      username: "{{ vcenter_username }}"
+      password: "{{ vcenter_password }}"
+      validate_certs: False
+      datacenter: Datacenter
+      datastore: datastore_6TB
+      folder: centos
+      template: t_centos8
+      name: centos8-pam
+      hardware:
+        nested_virt: true
+        memory_mb: 4096
+      networks:
+        - name: VMs11
+          ip: "10.100.11.109"
+          netmask: "255.255.255.0"
+          gateway: "10.100.11.254"
+      customization:
+        hostname: "centos-pam"
+        dns_servers: [8.8.8.8]
+      state: powered-on
+      wait_for_ip_address: true
+    register: deploy
+    delegate_to: localhost
+    tags:
+    - install
+
+- name: copy files and set auth ssh
+  hosts: centos8pam
+  become: true 
+  gather_facts: false
+
+  tasks:
+  - name: copy ssh.sh
+    copy:
+      src: ssh.sh 
+      dest: /root/
+      mode: 0744
+
+  - name: copy login.sh
+    copy:
+      src: login.sh
+      dest: /usr/local/bin/
+      mode: 0755
+
+  - name: copy 10-docker.rules
+    copy:
+      src: 10-docker.rules
+      dest: /etc/polkit-1/rules.d/
+
+  - name: run ssh.sh
+    shell: ./ssh.sh
+  tags:
+  - ssh
+
+- name: docker
+  hosts: centos8pam
+  become: true 
+  gather_facts: false
+  tasks:
+  - name: install docker
+    shell: "{{item}}"
+    with_items:
+      - yum install -y yum-utils
+      - yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      - yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      - systemctl start docker
+      - systemctl enable docker
+      - docker run hello-world
+      - usermod -aG docker otusadm
+      - setenforce 0
+      - sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
+  tags:
+  - docker
